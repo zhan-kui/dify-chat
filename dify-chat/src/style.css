@@ -1,0 +1,455 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 245 249 255;
+    --surface: 255 255 255;
+    --ink: 15 23 42;
+    --muted: 71 85 105;
+    --accent: 37 99 235;
+    --accent-2: 249 115 22;
+    --line: 226 232 240;
+    --glow: 56 189 248;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #app {
+    @apply min-h-screen;
+  }
+
+  body {
+    @apply bg-bg text-ink antialiased;
+    font-family: "Space Grotesk", "Segoe UI", sans-serif;
+    letter-spacing: 0.01em;
+    margin: 0;
+  }
+
+  code,
+  pre {
+    font-family: "DM Mono", ui-monospace, SFMono-Regular, monospace;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    background: radial-gradient(
+        circle at 15% 20%,
+        rgba(59, 130, 246, 0.18),
+        transparent 45%
+      ),
+      radial-gradient(
+        circle at 85% 12%,
+        rgba(56, 189, 248, 0.2),
+        transparent 45%
+      ),
+      radial-gradient(
+        circle at 20% 85%,
+        rgba(147, 197, 253, 0.2),
+        transparent 45%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(245, 249, 255, 1) 0%,
+        rgba(232, 243, 255, 1) 50%,
+        rgba(245, 249, 255, 1) 100%
+      );
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background-image: radial-gradient(
+      rgba(148, 163, 184, 0.12) 0.5px,
+      transparent 0.5px
+    );
+    background-size: 16px 16px;
+    opacity: 0.35;
+    pointer-events: none;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line/70 bg-surface/95 backdrop-blur-lg shadow-lift;
+  }
+
+  .section-title {
+    @apply text-xs uppercase tracking-[0.18em] text-muted/80;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-line/70 bg-white/80 px-3 py-2 text-sm text-ink shadow-sm outline-none transition focus:border-accent/70 focus:ring-4 focus:ring-accent/15;
+  }
+
+  .textarea {
+    @apply w-full rounded-2xl border border-line/70 bg-white/85 px-4 py-3 text-sm text-ink shadow-sm outline-none transition focus:border-accent/70 focus:ring-4 focus:ring-accent/15;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent text-white shadow-lift hover:bg-accent/90;
+  }
+
+  .btn-ghost {
+    @apply btn border border-line/80 bg-white/70 text-ink hover:border-accent/40 hover:text-accent;
+  }
+
+  .btn-warn {
+    @apply btn border border-accent-2/40 bg-white/70 text-accent-2 hover:bg-accent-2/10;
+  }
+
+  /* 低存在感按钮，用于设置入口 */
+  .btn-quiet {
+    @apply btn border border-line/60 bg-white/70 text-muted;
+  }
+
+  /* 新开聊天按钮，带图标 */
+  .btn-chat-new {
+    @apply h-12 w-12 rounded-full p-0 gap-0;
+    touch-action: manipulation;
+  }
+
+  .btn-chat-new svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  /* 标题层布局：左右按钮 + 中间标题居中 */
+  .header-grid {
+    @apply grid items-start gap-2;
+    grid-template-columns: 48px 1fr 48px;
+  }
+
+  .header-center {
+    @apply text-center;
+  }
+
+  .header-title {
+    @apply text-base font-semibold text-ink;
+  }
+
+  .header-status {
+    @apply mt-1 text-xs text-muted;
+  }
+
+  /* 历史聊天按钮（两个横杆） */
+  .btn-history {
+    @apply h-12 w-12 rounded-full p-0 gap-0 flex flex-col items-center justify-center;
+  }
+
+  .btn-history .history-bar {
+    display: block;
+    height: 2px;
+    width: 22px;
+    border-radius: 9999px;
+    background-color: currentColor;
+  }
+
+  .btn-history .history-bar:last-child {
+    width: 16px;
+    margin-top: 4px;
+  }
+
+  /* 全屏聊天容器，避免外层边框 */
+  .chat-shell {
+    @apply flex h-screen w-full flex-col bg-white overflow-hidden;
+  }
+
+  /* 顶部标题层使用浅灰底色 */
+  .chat-header {
+    @apply bg-slate-100/90 relative z-50;
+  }
+
+  /* 历史聊天抽屉 */
+  .history-overlay {
+    @apply fixed inset-0 z-40;
+  }
+
+  .history-backdrop {
+    @apply absolute inset-0 bg-black/40 backdrop-blur-sm;
+  }
+
+  .history-panel {
+    @apply absolute left-0 top-0 h-full w-[78%] max-w-sm border-r border-line/60 bg-white/95 backdrop-blur-lg shadow-2xl flex flex-col;
+  }
+
+  .history-header {
+    @apply flex items-center justify-between px-4 py-4 border-b border-line/60 bg-slate-100/80;
+  }
+
+  .history-list {
+    @apply flex-1 overflow-y-auto px-3 py-4 space-y-2;
+  }
+
+  .history-item {
+    @apply w-full flex items-center gap-3 rounded-xl border border-line/70 bg-white/90 px-3 py-3 text-left text-sm text-ink transition;
+  }
+
+  .history-item:hover {
+    @apply border-accent/40 text-ink;
+  }
+
+  .history-item-active {
+    @apply border-accent/50 bg-accent/5;
+  }
+
+  .history-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .history-bars span {
+    height: 2px;
+    width: 18px;
+    border-radius: 9999px;
+    background-color: rgba(37, 99, 235, 0.55);
+  }
+
+  .history-bars span:last-child {
+    width: 12px;
+  }
+
+  .history-title {
+    @apply text-sm font-medium text-ink;
+  }
+
+  .history-empty {
+    @apply px-4 py-6 text-sm text-muted;
+  }
+
+  /* 输入框容器，用于放置右下角按钮 */
+  .composer-wrap {
+    @apply relative;
+  }
+
+  /* 输入框额外内边距，避免文字被按钮遮挡 */
+  .composer-textarea {
+    padding-right: 5rem;
+    padding-bottom: 2.75rem;
+  }
+
+  /* 输入框右下角按钮容器 */
+  .composer-actions {
+    @apply absolute bottom-3 right-3 flex items-center gap-2;
+  }
+
+  /* 输入框内的发送状态提示 */
+  .composer-status {
+    position: absolute;
+    left: 16px;
+    bottom: 12px;
+    font-size: 12px;
+    color: rgba(71, 85, 105, 0.9);
+  }
+
+  /* 图标按钮基础样式 */
+  .icon-btn {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-full border text-sm transition duration-200 ease-out;
+  }
+
+  .icon-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* 发送按钮（向上箭头） */
+  .icon-send {
+    @apply border-accent/60 text-white shadow-sm;
+    background-color: rgba(37, 99, 235, 0.35);
+  }
+
+  .icon-send-active {
+    @apply border-accent/70 text-white;
+    background-color: rgba(37, 99, 235, 0.6);
+  }
+
+  .icon-send-disabled {
+    @apply border-line/60 text-muted;
+    background-color: rgba(148, 163, 184, 0.15);
+  }
+
+  /* 停止按钮（与发送共用位置） */
+  .icon-stop-active {
+    border-color: rgba(249, 115, 22, 0.6);
+    color: rgb(249, 115, 22);
+    background-color: rgba(249, 115, 22, 0.2);
+  }
+
+  /* 上传按钮（圆圈内加号） */
+  .icon-upload {
+    @apply border-line/70 text-muted;
+    background-color: rgba(148, 163, 184, 0.12);
+  }
+
+  .icon-upload-active {
+    border-color: rgba(30, 64, 175, 0.6);
+    color: rgb(30, 64, 175);
+    background-color: rgba(30, 64, 175, 0.12);
+  }
+
+  .icon-upload-disabled {
+    border-color: rgba(148, 163, 184, 0.35);
+    color: rgba(148, 163, 184, 0.65);
+    background-color: rgba(148, 163, 184, 0.1);
+  }
+
+  /* 基础气泡保持不变 */
+  .bubble {
+    @apply relative rounded-2xl border px-4 py-3 text-sm leading-relaxed shadow-sm;
+    max-width: 85%;
+  }
+
+  /* 用户气泡（右侧带尾巴） */
+  .bubble-user {
+    /* 1. 替换为视觉等效的纯色，避免伪元素重叠处颜色变深 */
+    background-color: #dce9fd;
+    border-color: #a7c6fb;
+
+    /* 2. 将右下角的圆角适当改小，让尾巴伸出的地方过渡更自然 */
+    border-bottom-right-radius: 6px;
+  }
+
+  /* 制造柔和的尾巴 */
+  .bubble-user::before {
+    content: "";
+    position: absolute;
+
+    /* 调整尾巴在右侧的位置，位于右下角曲线上方一点点 */
+    bottom: 12px;
+    right: -5px; /* 控制尾巴伸出去的长度 */
+    width: 10px;
+    height: 10px;
+
+    /* 背景色与本体保持一致，用来盖住本体右侧的边框直线 */
+    background-color: #dce9fd;
+
+    /* 只保留上方和右侧的边框，模拟出指向右侧的 V 型箭头 */
+    border-top: 1px solid #a7c6fb;
+    border-right: 1px solid #a7c6fb;
+
+    /* 🌟 核心魔法：给箭头的尖角加上圆角，使其变得非常柔和可爱 */
+    border-top-right-radius: 4px;
+
+    /* 旋转 45 度，将其变成一个指向右边的小触角 */
+    transform: rotate(45deg);
+  }
+
+  /* 助手气泡（左侧带尾巴） */
+  .bubble-assistant {
+    border-color: rgba(226, 232, 240, 1);
+    background-color: rgba(255, 255, 255, 0.95);
+  }
+
+  .bubble-assistant::after {
+    content: "";
+    position: absolute;
+    left: -6px;
+    bottom: 10px;
+    border-right: 8px solid rgba(255, 255, 255, 0.95);
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+  }
+
+  /* 气泡文本 */
+  .bubble-text {
+    @apply text-ink;
+  }
+
+  /* 思维链展示 */
+  .think-box {
+    @apply mb-3 rounded-xl border border-line/70 bg-slate-50/80 px-3 py-2 text-xs text-muted;
+  }
+
+  .think-title {
+    @apply cursor-pointer text-xs font-semibold text-muted;
+  }
+
+  .think-content {
+    @apply mt-2 text-xs text-muted;
+    white-space: pre-wrap;
+  }
+
+  /* 流式输出时的打字动画 */
+  .typing-indicator {
+    @apply flex items-center gap-2;
+    height: 16px;
+  }
+
+  .typing-indicator span {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background-color: rgba(37, 99, 235, 0.7);
+    animation: typingBounce 1s infinite ease-in-out;
+  }
+
+  .typing-indicator span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .typing-indicator span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-line/70 bg-white/80 px-2.5 py-1 text-xs text-ink;
+  }
+}
+
+@layer utilities {
+  .text-glow {
+    text-shadow: 0 0 18px rgba(56, 189, 248, 0.4);
+  }
+
+  .icon-fade-enter-active,
+  .icon-fade-leave-active {
+    transition: opacity 0.18s ease;
+  }
+
+  .icon-fade-enter-from,
+  .icon-fade-leave-to {
+    opacity: 0;
+  }
+
+  @keyframes typingBounce {
+    0%,
+    100% {
+      transform: translateY(0);
+      opacity: 0.6;
+    }
+    50% {
+      transform: translateY(-4px);
+      opacity: 1;
+    }
+  }
+
+  .scrollbar-soft::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-soft::-webkit-scrollbar-thumb {
+    background-color: rgba(15, 23, 42, 0.2);
+    border-radius: 10px;
+  }
+}
