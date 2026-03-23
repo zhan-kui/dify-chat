@@ -37,6 +37,7 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   attachments?: Attachment[];
+  time?: number;
 };
 
 // 历史会话结构（存入本地）
@@ -458,6 +459,24 @@ const clearAllHistory = () => {
   localStorage.removeItem(historyKey);
   localStorage.removeItem(historyActiveKey);
 };
+// 格式化时间戳为 HH:MM
+const formatTime = (ts?: number) => {
+  if (!ts) return "";
+  return new Date(ts).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
+// 建议语句填入输入框
+const useSuggestion = (text: string) => {
+  composer.value = text;
+  nextTick(() => {
+    resizeComposer();
+    composerRef.value?.focus();
+  });
+};
+
 // 格式化文件大小
 const formatBytes = (bytes: number) => {
   if (bytes === 0) return "0 B";
@@ -635,7 +654,7 @@ const splitThinkContent = (raw: string) => {
 const formattedMessages = computed(() => {
   return messages.value.map((m) => {
     if (m.role !== "assistant")
-      return { ...m, think: "", answer: m.content, isThinking: false };
+      return { ...m, think: "", answer: m.content, isThinking: false, isInitialLoading: false };
 
     const { think, answer, isThinking } = splitThinkContent(m.content || "");
 
@@ -765,20 +784,23 @@ const sendMessage = async () => {
 
   const pendingAttachments = attachments.value.map((item) => ({ ...item }));
 
+  const now = Date.now();
   const userMessage: Message = {
-    id: `user-${Date.now()}`,
+    id: `user-${now}`,
     role: "user",
     content: text,
     attachments: pendingAttachments.length ? pendingAttachments : undefined,
+    time: now,
   };
   messages.value.push(userMessage);
   syncConversation();
 
   // 预留助手消息用于流式更新
   const assistantMessage: Message = {
-    id: `assistant-${Date.now()}`,
+    id: `assistant-${now}`,
     role: "assistant",
     content: "",
+    time: now,
   };
   messages.value.push(assistantMessage);
   await scrollToBottom();
@@ -969,15 +991,56 @@ const sendMessage = async () => {
       <!-- 聊天内容区（可滚动） -->
       <div
         ref="chatRef"
-        class="scrollbar-soft flex-1 space-y-4 overflow-y-auto px-5 py-6"
+        class="scrollbar-soft flex-1 overflow-y-auto px-4 py-5"
+        :class="messages.length === 0 ? 'flex flex-col' : 'space-y-4'"
       >
-        <!-- 暂时不需要，但后续可能要用，先留着 -->
-        <!-- <div
-          v-if="messages.length === 0"
-          class="rounded-2xl border border-dashed border-line/60 bg-surface/70 p-6 text-sm text-muted"
-        >
-          欢迎使用聊天控制台。长按右上角图标 5 秒打开设置。
-        </div> -->
+        <!-- 欢迎空状态 -->
+        <div v-if="messages.length === 0" class="welcome-state">
+          <div class="welcome-icon">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M12 2l1.5 3.5L17 7l-3.5 1.5L12 12l-1.5-3.5L7 7l3.5-1.5L12 2z"
+                fill="currentColor"
+                opacity="0.9"
+              />
+              <path
+                d="M19 14l1 2.5L22.5 17l-2.5 1L19 20.5l-1-2.5L15.5 17l2.5-1L19 14z"
+                fill="currentColor"
+                opacity="0.6"
+              />
+              <path
+                d="M5 14l0.7 1.8L7.5 16.5l-1.8 0.7L5 19l-0.7-1.8L2.5 16.5l1.8-0.7L5 14z"
+                fill="currentColor"
+                opacity="0.4"
+              />
+            </svg>
+          </div>
+          <h2 class="welcome-title">你好，有什么可以帮你的？</h2>
+          <p class="welcome-subtitle">选择下方建议，或直接输入你的问题</p>
+          <div class="welcome-suggestions">
+            <button
+              type="button"
+              class="suggestion-chip"
+              @click="useSuggestion('帮我写一首关于春天的诗')"
+            >
+              ✦ 写一首诗
+            </button>
+            <button
+              type="button"
+              class="suggestion-chip"
+              @click="useSuggestion('帮我总结以下内容：')"
+            >
+              ✦ 帮我总结
+            </button>
+            <button
+              type="button"
+              class="suggestion-chip"
+              @click="useSuggestion('请解释这段代码：')"
+            >
+              ✦ 解释代码
+            </button>
+          </div>
+        </div>
 
         <!-- 聊天气泡 -->
         <div
@@ -986,110 +1049,114 @@ const sendMessage = async () => {
           class="flex"
           :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
         >
+          <!-- 助手消息带小头像点 -->
           <div
-            class="bubble"
-            :class="
-              message.role === 'user' ? 'bubble-user' : 'bubble-assistant'
-            "
+            v-if="message.role === 'assistant'"
+            class="message-row justify-start"
           >
-            <!-- 思考过程 -->
-            <details
-              v-if="message.think || message.isThinking"
-              class="think-box"
-              open
-            >
-              <summary
-                class="think-title"
-                :aria-label="message.isThinking ? '正在思考' : '思考'"
-              >
-                <svg class="think-icon" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M9.5 18.5h5M10 21h4M12 3a6.5 6.5 0 0 0-3.9 11.7c.6.4 1.1 1.2 1.2 2h5.4c.1-.8.6-1.6 1.2-2A6.5 6.5 0 0 0 12 3z"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </summary>
-              <div class="think-content">{{ message.think }}</div>
-            </details>
-
-            <!-- 回答正文 -->
-            <p v-if="message.answer" class="bubble-text">
-              {{ message.answer }}
-            </p>
-
-            <!-- 加载占位符：只有在真正什么都没有输出的时候才显示 -->
-            <div
-              v-else-if="
-                message.isInitialLoading ||
-                (message.isThinking && !message.think)
-              "
-              class="typing-indicator"
-            >
-              <span></span>
-              <span></span>
-              <span></span>
+            <div class="assistant-dot">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 2l1.5 3.5L17 7l-3.5 1.5L12 12l-1.5-3.5L7 7l3.5-1.5L12 2z"
+                  fill="currentColor"
+                />
+              </svg>
             </div>
-
-            <!-- 附件展示（用户发送的文件） -->
-            <div v-if="message.attachments?.length" class="mt-3">
-              <div class="flex flex-wrap gap-2">
-                <span
-                  v-for="file in message.attachments"
-                  :key="file.id"
-                  class="chip"
+            <div class="flex flex-col items-start gap-1">
+              <div class="bubble bubble-assistant">
+                <!-- 思考过程 -->
+                <details
+                  v-if="message.think || message.isThinking"
+                  class="think-box"
+                  open
                 >
-                  {{ file.name }} - {{ formatBytes(file.size) }}
-                  <span v-if="file.status === 'error'" class="text-accent-2">
-                    {{ file.error ? `上传失败：${file.error}` : "上传失败" }}
-                  </span>
-                  <span
-                    v-else-if="file.status === 'uploaded'"
-                    class="text-muted"
+                  <summary
+                    class="think-title"
+                    :aria-label="message.isThinking ? '正在思考' : '思考'"
                   >
-                    已上传
+                    <svg class="think-icon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path
+                        d="M9.5 18.5h5M10 21h4M12 3a6.5 6.5 0 0 0-3.9 11.7c.6.4 1.1 1.2 1.2 2h5.4c.1-.8.6-1.6 1.2-2A6.5 6.5 0 0 0 12 3z"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.6"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                    <span>{{ message.isThinking ? "思考中…" : "思考过程" }}</span>
+                  </summary>
+                  <div class="think-content">{{ message.think }}</div>
+                </details>
+
+                <!-- 回答正文 -->
+                <p v-if="message.answer" class="bubble-text">{{ message.answer }}</p>
+
+                <!-- 加载占位符 -->
+                <div
+                  v-else-if="message.isInitialLoading || (message.isThinking && !message.think)"
+                  class="typing-indicator"
+                >
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+              <span v-if="message.time" class="bubble-time pl-1">{{ formatTime(message.time) }}</span>
+            </div>
+          </div>
+
+          <!-- 用户消息 -->
+          <div v-else class="flex flex-col items-end gap-1">
+            <div class="bubble bubble-user">
+              <p class="bubble-text">{{ message.answer }}</p>
+
+              <!-- 附件展示 -->
+              <div v-if="message.attachments?.length" class="mt-3">
+                <div class="flex flex-wrap gap-2">
+                  <span
+                    v-for="file in message.attachments"
+                    :key="file.id"
+                    class="chip"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" class="flex-shrink-0 text-muted">
+                      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    {{ file.name }} · {{ formatBytes(file.size) }}
+                    <span v-if="file.status === 'error'" class="text-accent-2">失败</span>
+                    <span v-else-if="file.status === 'uploaded'" class="text-emerald-500">✓</span>
                   </span>
-                </span>
+                </div>
               </div>
             </div>
+            <span v-if="message.time" class="bubble-time pr-1">{{ formatTime(message.time) }}</span>
           </div>
         </div>
       </div>
 
       <!-- 输入区 -->
-      <div class="border-t border-line/50 px-5 py-4">
-        <div
-          v-if="info"
-          class="mb-3 rounded-xl border border-accent/30 bg-white/80 p-3 text-xs text-accent"
-        >
-          {{ info }}
-        </div>
-        <div
-          v-if="error"
-          class="mb-3 rounded-xl border border-accent-2/40 bg-surface/70 p-3 text-xs text-accent-2"
-        >
-          {{ error }}
-        </div>
+      <div class="input-footer">
+        <div v-if="info" class="status-info">{{ info }}</div>
+        <div v-if="error" class="status-error">{{ error }}</div>
 
         <!-- 待上传附件 -->
-        <div v-if="attachments.length" class="mb-3 flex flex-wrap gap-2">
+        <div v-if="attachments.length" class="mb-2.5 flex flex-wrap gap-2">
           <span v-for="file in attachments" :key="file.id" class="chip">
-            {{ file.name }} - {{ formatBytes(file.size) }}
-            <span v-if="file.status === 'error'" class="text-accent-2">
-              {{ file.error ? `上传失败：${file.error}` : "上传失败" }}
-            </span>
-            <span v-else-if="file.status === 'uploaded'" class="text-muted">
-              已上传
-            </span>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" class="flex-shrink-0 text-muted">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            {{ file.name }} · {{ formatBytes(file.size) }}
+            <span v-if="file.status === 'error'" class="text-accent-2 text-xs">失败</span>
+            <span v-else-if="file.status === 'uploaded'" class="text-emerald-500 text-xs">✓</span>
             <button
               type="button"
-              class="ml-2 text-muted hover:text-accent"
+              class="ml-1 flex-shrink-0 text-muted/60 hover:text-accent transition"
+              aria-label="移除附件"
               @click="removeAttachment(file.id)"
             >
-              x
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
             </button>
           </span>
         </div>
@@ -1103,7 +1170,7 @@ const sendMessage = async () => {
               ref="composerRef"
               class="textarea composer-textarea"
               rows="1"
-              placeholder="输入内容，按 Enter 发送"
+              placeholder="说点什么…"
               @input="resizeComposer"
               @keydown.enter.exact.prevent="sendMessage"
             />
