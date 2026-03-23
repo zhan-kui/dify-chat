@@ -56,6 +56,133 @@ export function parseJsonSafe(input: string) {
   return JSON.parse(input);
 }
 
+// 安全提取字符串字段（兼容数字/布尔/数组）
+function pickString(value: unknown): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const picked = pickString(item);
+      if (picked) return picked;
+    }
+  }
+  return undefined;
+}
+
+// 从 outputs 中提取第一个可用字符串
+function pickFromOutputs(outputs: unknown) {
+  if (!outputs) return undefined;
+  if (Array.isArray(outputs)) {
+    for (const item of outputs) {
+      const picked = pickString(item);
+      if (picked) return picked;
+    }
+    return undefined;
+  }
+  if (typeof outputs !== "object") return undefined;
+  const record = outputs as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    const val = record[key];
+    const picked = pickString(val);
+    if (picked) return picked;
+  }
+  return undefined;
+}
+
+const ANSWER_KEYS = [
+  "answer",
+  "content",
+  "text",
+  "output",
+  "result",
+  "reply",
+  "message",
+];
+
+const SKIP_KEYS = new Set([
+  "event",
+  "type",
+  "status",
+  "success",
+  "ok",
+  "id",
+  "conversation_id",
+  "conversationId",
+  "message_id",
+  "task_id",
+  "user",
+  "created_at",
+  "updated_at",
+  "mode",
+  "files",
+  "file_id",
+  "file_name",
+  "metadata",
+  "usage",
+]);
+
+// 尽可能兼容不同响应结构提取回答
+function extractAnswer(data: any): string {
+  if (data === null || data === undefined) return "";
+
+  if (
+    typeof data === "string" ||
+    typeof data === "number" ||
+    typeof data === "boolean"
+  ) {
+    return String(data);
+  }
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const picked = extractAnswer(item);
+      if (picked) return picked;
+    }
+    return "";
+  }
+
+  if (typeof data !== "object") return "";
+
+  // 先按常见字段提取
+  for (const key of ANSWER_KEYS) {
+    const picked = pickString((data as Record<string, unknown>)[key]);
+    if (picked) return picked;
+  }
+
+  const outputs =
+    pickFromOutputs((data as any)?.outputs) ??
+    pickFromOutputs((data as any)?.data?.outputs) ??
+    pickFromOutputs((data as any)?.result?.outputs);
+  if (outputs) return outputs;
+
+  // 递归寻找第一个看起来像回答的字符串
+  for (const [key, value] of Object.entries(data)) {
+    if (SKIP_KEYS.has(key)) continue;
+    const picked = extractAnswer(value);
+    if (picked) return picked;
+  }
+
+  return "";
+}
+
+// 提取会话 ID（兼容不同字段名）
+function extractConversationId(data: any) {
+  return (
+    pickString(data?.conversation_id) ??
+    pickString(data?.data?.conversation_id) ??
+    pickString(data?.result?.conversation_id) ??
+    pickString(data?.conversationId) ??
+    pickString(data?.data?.conversationId) ??
+    pickString(data?.result?.conversationId)
+  );
+}
+
 export async function uploadDifyFile(options: {
   baseUrl: string;
   apiKey: string;
@@ -135,13 +262,25 @@ export async function sendDifyChat(options: {
 
   await assertOk(response);
 
-  // 【修复 1】不再依赖 Content-Type 判断，只看 responseMode
-  if (options.responseMode === "blocking") {
-    const data = await response.json();
-    return {
-      answer: data?.answer || "",
-      conversationId: data?.conversation_id,
-    };
+  const contentType = response.headers.get("content-type") ?? "";
+  const isJsonResponse = contentType.includes("application/json");
+  const isEventStream = contentType.includes("text/event-stream");
+
+  // 非流式或服务端未返回 SSE 时，按普通响应处理
+  if (options.responseMode === "blocking" || isJsonResponse || !isEventStream) {
+    const raw = await response.text();
+    try {
+      const data = JSON.parse(raw);
+      return {
+        answer: extractAnswer(data),
+        conversationId: extractConversationId(data),
+      };
+    } catch {
+      return {
+        answer: raw,
+        conversationId: undefined,
+      };
+    }
   }
 
   // 流式处理
@@ -156,25 +295,42 @@ export async function sendDifyChat(options: {
         const parsed = JSON.parse(data);
 
         // 更新会话ID
-        if (parsed.conversation_id) conversationId = parsed.conversation_id;
+        const nextConversationId = extractConversationId(parsed);
+        if (nextConversationId) conversationId = nextConversationId;
 
-        // 【修复 2】根据 Dify 事件类型精确提取
-        // 只处理 message 事件（正式回答）和 agent_thought 事件（思考过程）
+        // 根据事件类型提取数据：仅消费 message / agent_thought，避免非正文事件污染
         let chunk = "";
-
         if (parsed.event === "message") {
-          chunk = parsed.answer || "";
+          // Dify 可能返回 delta 或 answer
+          chunk =
+            pickString(parsed?.delta) ??
+            pickString(parsed?.answer) ??
+            pickString(parsed?.data?.delta) ??
+            pickString(parsed?.data?.answer) ??
+            pickString(parsed?.data?.content) ??
+            "";
+        } else if (parsed.event === "message_end") {
+          // 某些环境只在结束事件中带完整答案
+          chunk = extractAnswer(parsed);
         } else if (parsed.event === "agent_thought") {
-          // 如果是思考过程，我们手动包裹标签
-          const thought = parsed.thought || "";
-          if (thought) chunk = `<think>${thought}</think>`;
+          const thought =
+            parsed.thought ??
+            parsed?.data?.thought ??
+            parsed?.data?.content ??
+            "";
+          if (typeof thought === "string" && thought.trim()) {
+            chunk = `<think>${thought}</think>`;
+          }
         } else if (parsed.event === "error") {
           throw new Error(parsed.message || "流式输出错误");
+        } else if (!parsed.event) {
+          // 某些网关会省略 event 字段，退回通用解析
+          chunk = extractAnswer(parsed);
         }
 
         if (chunk) {
           fullAnswer += chunk;
-          options.onToken?.(chunk); // 触发打字机回调
+          options.onToken?.(chunk);
         }
       } catch (e) {
         // 忽略非 JSON 数据

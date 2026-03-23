@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
 import {
   parseJsonSafe,
   sendDifyChat,
@@ -115,6 +123,8 @@ const status = ref<"idle" | "sending" | "streaming">("idle");
 const abortController = ref<AbortController | null>(null);
 const chatRef = ref<HTMLDivElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const headerRef = ref<HTMLDivElement | null>(null);
+const composerRef = ref<HTMLTextAreaElement | null>(null);
 const conversations = ref<Conversation[]>([]);
 const activeConversationId = ref<string | null>(null);
 const showHistory = ref(false);
@@ -284,6 +294,43 @@ onMounted(() => {
   loadHistory();
 });
 
+// 同步标题栏高度到 CSS 变量，避免历史面板被遮挡
+const updateHeaderOffset = () => {
+  const height = headerRef.value?.getBoundingClientRect().height ?? 0;
+  if (height) {
+    document.documentElement.style.setProperty(
+      "--header-offset",
+      `${Math.ceil(height)}px`
+    );
+  }
+};
+
+onMounted(() => {
+  updateHeaderOffset();
+  window.addEventListener("resize", updateHeaderOffset);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("resize", updateHeaderOffset);
+});
+
+// 输入框高度自适应：保持默认紧凑，只在内容超出时增高
+const resizeComposer = () => {
+  const el = composerRef.value;
+  if (!el) return;
+  el.style.height = "auto";
+  const next = Math.min(el.scrollHeight, 160);
+  el.style.height = `${next}px`;
+};
+
+watch(composer, () => {
+  nextTick(() => resizeComposer());
+});
+
+onMounted(() => {
+  resizeComposer();
+});
+
 // 生成会话标题（取前 10 个字符）
 const buildTitle = (text: string) => {
   const cleaned = text.replace(/\s+/g, " ").trim();
@@ -366,6 +413,50 @@ const selectConversation = (id: string) => {
   closeHistory();
   // 切换会话后自动贴底，避免输入框挡住新内容
   scrollToBottom();
+};
+
+// 删除单条历史记录
+const deleteConversation = (id: string) => {
+  const index = conversations.value.findIndex((item) => item.id === id);
+  if (index === -1) return;
+  conversations.value.splice(index, 1);
+  if (activeConversationId.value === id) {
+    // 删除当前会话时，重置聊天状态，避免残留内容
+    stopStreaming();
+    messages.value = [];
+    attachments.value = [];
+    composer.value = "";
+    error.value = "";
+    info.value = "";
+    if (settings.providerId === "dify") {
+      settings.dify.conversationId = "";
+    }
+    activeConversationId.value = null;
+    localStorage.removeItem(historyActiveKey);
+  }
+  if (conversations.value.length === 0) {
+    localStorage.removeItem(historyKey);
+    localStorage.removeItem(historyActiveKey);
+  } else {
+    persistHistory();
+  }
+};
+
+// 删除所有历史记录
+const clearAllHistory = () => {
+  stopStreaming();
+  conversations.value = [];
+  activeConversationId.value = null;
+  messages.value = [];
+  attachments.value = [];
+  composer.value = "";
+  error.value = "";
+  info.value = "";
+  if (settings.providerId === "dify") {
+    settings.dify.conversationId = "";
+  }
+  localStorage.removeItem(historyKey);
+  localStorage.removeItem(historyActiveKey);
 };
 // 格式化文件大小
 const formatBytes = (bytes: number) => {
@@ -496,7 +587,6 @@ const openUploadPicker = () => {
 // 需要处理“正在思考”的状态。即：如果找到了 <think> 但还没找到 </think>，应该把 <think> 之后的所有内容都实时放入 think 字段中。
 const splitThinkContent = (raw: string) => {
   const text = raw || "";
-  // 识别多种标签
   const startTags = ["<think>", "<thought>", "<想>"];
   const endTags = ["</think>", "</thought>", "</想>"];
 
@@ -504,75 +594,64 @@ const splitThinkContent = (raw: string) => {
   let endTag = "";
   let startIndex = -1;
 
+  // 找到第一个匹配的开始标签
   for (let i = 0; i < startTags.length; i++) {
-    if (text.includes(startTags[i])) {
+    const idx = text.indexOf(startTags[i]);
+    if (idx !== -1) {
       startTag = startTags[i];
       endTag = endTags[i];
-      startIndex = text.indexOf(startTag);
+      startIndex = idx;
       break;
     }
   }
 
+  // 情况 1: 完全没有思考标签 -> 全是回答
   if (startIndex === -1) {
-    return { think: "", answer: text.trim(), isThinking: false };
+    return { think: "", answer: text, isThinking: false };
   }
 
   const endIndex = text.indexOf(endTag);
 
+  // 情况 2: 有开始没结束 -> 正在思考
   if (endIndex === -1) {
-    // 正在思考：把标签后的全给 think
     return {
       think: text.slice(startIndex + startTag.length),
-      answer: text.slice(0, startIndex).trim(),
+      answer: text.slice(0, startIndex),
       isThinking: true,
     };
-  } else {
-    // 思考完成：挖掉整个思考块，防止重复
-    const think = text.slice(startIndex + startTag.length, endIndex).trim();
-    const answer = (
-      text.slice(0, startIndex) + text.slice(endIndex + endTag.length)
-    ).trim();
-    return { think, answer, isThinking: false };
   }
+
+  // 情况 3: 思考已完成 -> 剥离思考块
+  // 核心：这里要保留 startIndex 之前的正文和 endIndex 之后的正文
+  const think = text.slice(startIndex + startTag.length, endIndex);
+  const answer = (
+    text.slice(0, startIndex) + text.slice(endIndex + endTag.length)
+  ).trim();
+
+  return { think, answer: answer || "", isThinking: false };
 };
 // 为渲染做一层转换，方便显示思维链   v确保在思考时，即便 answer 为空，只要 think 有内容，就不要回退到原始文本，否则会显示出 <think> 标签。
 // 为渲染做一层转换，方便显示思维链
 const formattedMessages = computed(() => {
-  return messages.value.map((message) => {
-    // 处理用户消息
-    if (message.role !== "assistant") {
-      return {
-        ...message,
-        think: "",
-        answer: message.content,
-        isThinking: false,
-        isInitialLoading: false,
-      };
-    }
+  return messages.value.map((m) => {
+    if (m.role !== "assistant")
+      return { ...m, think: "", answer: m.content, isThinking: false };
 
-    // 处理助手消息
-    const { think, answer, isThinking } = splitThinkContent(message.content);
+    const { think, answer, isThinking } = splitThinkContent(m.content || "");
 
-    // 判断是否处于“初始加载”状态：正在发送中 且 没有任何内容吐出
-    const isInitialLoading = status.value === "streaming" && !message.content;
-
-    // 如果解析后没有可显示内容，且不是在加载中，回退到原始文本，避免空白气泡
-    const safeAnswer =
-      answer ||
-      (think || isThinking || isInitialLoading
-        ? ""
-        : (message.content || "").trim());
+    // 真正的“初始加载”：模型连接上了(streaming)，但连一个字（包括标签）都没吐出来
+    const isInitialLoading =
+      status.value === "streaming" && (!m.content || m.content.length === 0);
 
     return {
-      ...message,
+      ...m,
       think,
-      answer: safeAnswer,
+      answer,
       isThinking,
       isInitialLoading,
     };
   });
 });
-
 // 处理流式分片：兼容“增量分片”和“累计分片”，避免重复内容,Dify 的 /chat-messages 接口在 streaming 模式下返回的是 增量 (Incremental) 内容。你原有的代码中包含大量 startsWith 检查，这通常是为了兼容某些“每次返回全量”的非标准接口。对于 Dify，直接累加是最安全的。
 const applyStreamChunk = (message: Message, chunk: string) => {
   if (!chunk) return;
@@ -586,9 +665,9 @@ const applyStreamChunk = (message: Message, chunk: string) => {
 
   // 2. 检查是否有大段重复（针对 Dify Agent 可能重复发送回答的问题）
   // 如果新 chunk 已经完全包含在当前内容里了，直接丢弃
-  if (current.includes(chunk) && chunk.length > 5) {
-    return;
-  }
+  // if (current.includes(chunk) && chunk.length > 5) {
+  //   return;
+  // }
 
   // 3. 正常增量累加
   message.content += chunk;
@@ -632,6 +711,18 @@ const ensureDifyUploads = async (signal?: AbortSignal) => {
   }
 };
 
+// 同步上传状态到用户消息附件（避免发送后看不到附件）
+const syncUserAttachments = (target?: Message) => {
+  if (!target?.attachments?.length) return;
+  for (const item of target.attachments) {
+    const latest = attachments.value.find((att) => att.id === item.id);
+    if (!latest) continue;
+    item.status = latest.status;
+    item.uploadFileId = latest.uploadFileId;
+    item.error = latest.error;
+  }
+};
+
 // 发送消息主流程
 const sendMessage = async () => {
   if (!composer.value.trim() || isBusy.value) {
@@ -672,11 +763,13 @@ const sendMessage = async () => {
   // 确保有会话容器
   ensureConversation(text);
 
+  const pendingAttachments = attachments.value.map((item) => ({ ...item }));
+
   const userMessage: Message = {
     id: `user-${Date.now()}`,
     role: "user",
     content: text,
-    attachments: attachments.value.length ? [...attachments.value] : undefined,
+    attachments: pendingAttachments.length ? pendingAttachments : undefined,
   };
   messages.value.push(userMessage);
   syncConversation();
@@ -710,6 +803,9 @@ const sendMessage = async () => {
         await ensureDifyUploads(controller.signal);
       }
 
+      // 更新用户消息里的附件状态
+      syncUserAttachments(userMessage);
+
       const filesPayload =
         attachments.value
           .filter((item) => item.uploadFileId)
@@ -742,13 +838,16 @@ const sendMessage = async () => {
       if (!assistantMessage.content) {
         assistantMessage.content = result.answer;
       }
-      if (!assistantMessage.content.trim()) {
+      const hasAnswer = assistantMessage.content.trim().length > 0;
+      if (!hasAnswer) {
         assistantMessage.content = "服务端未返回回答。";
         error.value = error.value || "服务端未返回回答。";
       }
-      if (streamingEnabled.value && !streamed) {
+      if (streamingEnabled.value && !streamed && !hasAnswer) {
         info.value =
           "当前接口返回非流式响应，已按普通模式展示。可能是服务端未开启流式或网关屏蔽。";
+      } else {
+        info.value = "";
       }
       scheduleScroll();
       if (result.conversationId) {
@@ -773,13 +872,16 @@ const sendMessage = async () => {
       if (!assistantMessage.content) {
         assistantMessage.content = result.answer;
       }
-      if (!assistantMessage.content.trim()) {
+      const hasAnswer = assistantMessage.content.trim().length > 0;
+      if (!hasAnswer) {
         assistantMessage.content = "服务端未返回回答。";
         error.value = error.value || "服务端未返回回答。";
       }
-      if (streamingEnabled.value && !streamed) {
+      if (streamingEnabled.value && !streamed && !hasAnswer) {
         info.value =
           "当前接口返回非流式响应，已按普通模式展示。可能是服务端未开启流式或网关屏蔽。";
+      } else {
+        info.value = "";
       }
       scheduleScroll();
       syncConversation();
@@ -807,7 +909,10 @@ const sendMessage = async () => {
     <!-- 主聊天容器 -->
     <section class="chat-shell">
       <!-- 标题层 -->
-      <div class="chat-header border-b border-line/50 px-5 pb-4 pt-4">
+      <div
+        ref="headerRef"
+        class="chat-header border-b border-line/50 px-5 pb-4 pt-4"
+      >
         <div class="header-grid">
           <!-- 左侧历史按钮：两个横杆，第二根更短 -->
           <button
@@ -893,8 +998,20 @@ const sendMessage = async () => {
               class="think-box"
               open
             >
-              <summary class="think-title">
-                {{ message.isThinking ? "正在思考..." : "思维链" }}
+              <summary
+                class="think-title"
+                :aria-label="message.isThinking ? '正在思考' : '思考'"
+              >
+                <svg class="think-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9.5 18.5h5M10 21h4M12 3a6.5 6.5 0 0 0-3.9 11.7c.6.4 1.1 1.2 1.2 2h5.4c.1-.8.6-1.6 1.2-2A6.5 6.5 0 0 0 12 3z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
               </summary>
               <div class="think-content">{{ message.think }}</div>
             </details>
@@ -915,6 +1032,28 @@ const sendMessage = async () => {
               <span></span>
               <span></span>
               <span></span>
+            </div>
+
+            <!-- 附件展示（用户发送的文件） -->
+            <div v-if="message.attachments?.length" class="mt-3">
+              <div class="flex flex-wrap gap-2">
+                <span
+                  v-for="file in message.attachments"
+                  :key="file.id"
+                  class="chip"
+                >
+                  {{ file.name }} - {{ formatBytes(file.size) }}
+                  <span v-if="file.status === 'error'" class="text-accent-2">
+                    {{ file.error ? `上传失败：${file.error}` : "上传失败" }}
+                  </span>
+                  <span
+                    v-else-if="file.status === 'uploaded'"
+                    class="text-muted"
+                  >
+                    已上传
+                  </span>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -961,14 +1100,15 @@ const sendMessage = async () => {
             <!-- Shift + Enter 换行，Enter 发送 -->
             <textarea
               v-model="composer"
+              ref="composerRef"
               class="textarea composer-textarea"
-              rows="3"
+              rows="1"
               placeholder="输入内容，按 Enter 发送"
+              @input="resizeComposer"
               @keydown.enter.exact.prevent="sendMessage"
             />
 
-            <!-- 输入框内状态提示 -->
-            <span v-if="isBusy" class="composer-status">发送中...</span>
+            <!-- 输入框内状态提示已移除 -->
 
             <!-- 右下角图标按钮：上传 + 发送（发送时切换为停止） -->
             <div class="composer-actions">
@@ -1036,37 +1176,69 @@ const sendMessage = async () => {
     </section>
 
     <!-- 历史聊天面板：点击左上角按钮打开 -->
-    <div v-if="showHistory" class="history-overlay">
-      <div class="history-backdrop" @click="toggleHistory" />
-      <aside class="history-panel" @click.stop>
-        <div class="history-header">
-          <span class="section-title">历史聊天</span>
-        </div>
+    <Transition name="history-fade">
+      <div v-if="showHistory" class="history-overlay">
+        <div class="history-backdrop" @click="toggleHistory" />
+        <aside class="history-panel" @click.stop>
+          <div class="history-header">
+            <span class="section-title">历史聊天</span>
+            <button
+              v-if="conversations.length"
+              class="history-clear"
+              type="button"
+              @click="clearAllHistory"
+            >
+              全部删除
+            </button>
+          </div>
 
-        <div v-if="conversations.length === 0" class="history-empty">
-          暂无历史记录，发送第一条消息后会自动保存到浏览器。
-        </div>
+          <div v-if="conversations.length === 0" class="history-empty">
+            暂无历史记录，发送第一条消息后会自动保存到浏览器。
+          </div>
 
-        <div v-else class="history-list scrollbar-soft">
-          <button
-            v-for="item in conversations"
-            :key="item.id"
-            type="button"
-            :class="[
-              'history-item',
-              item.id === activeConversationId ? 'history-item-active' : '',
-            ]"
-            @click="selectConversation(item.id)"
-          >
-            <span class="history-bars">
-              <span></span>
-              <span></span>
-            </span>
-            <span class="history-title">{{ item.title }}</span>
-          </button>
-        </div>
-      </aside>
-    </div>
+          <div v-else class="history-list scrollbar-soft">
+            <div
+              v-for="item in conversations"
+              :key="item.id"
+              class="history-row"
+            >
+              <button
+                type="button"
+                :class="[
+                  'history-item',
+                  item.id === activeConversationId ? 'history-item-active' : '',
+                ]"
+                @click="selectConversation(item.id)"
+              >
+                <span class="history-bars">
+                  <span></span>
+                  <span></span>
+                </span>
+                <span class="history-title">{{ item.title }}</span>
+              </button>
+              <button
+                class="history-delete"
+                type="button"
+                aria-label="删除记录"
+                title="删除记录"
+                @click="deleteConversation(item.id)"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M6 7h12M9 7v10M15 7v10M10 4h4M8 7l1-3h6l1 3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </Transition>
 
     <!-- 隐藏的文件选择器，通过按钮触发 -->
     <input

@@ -33,4 +33,18 @@ export async function readEventStream(
       }
     }
   }
+
+  // 处理末尾未换行的残留数据，避免最后一段被丢失
+  if (buffer.trim()) {
+    const tailLines = buffer.split(/\r?\n/);
+    for (const line of tailLines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      if (trimmed.startsWith("data:")) {
+        onData(trimmed.replace(/^data:\s*/, ""));
+      }
+    }
+  }
 }
