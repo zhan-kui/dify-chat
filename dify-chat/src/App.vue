@@ -991,8 +991,7 @@ const sendMessage = async () => {
       <!-- 聊天内容区（可滚动） -->
       <div
         ref="chatRef"
-        class="scrollbar-soft flex-1 overflow-y-auto px-4 py-5"
-        :class="messages.length === 0 ? 'flex flex-col' : 'space-y-4'"
+        class="scrollbar-soft flex-1 overflow-y-auto px-4 py-5 flex flex-col gap-4"
       >
         <!-- 欢迎空状态 -->
         <div v-if="messages.length === 0" class="welcome-state">
@@ -1090,7 +1089,11 @@ const sendMessage = async () => {
                 </details>
 
                 <!-- 回答正文 -->
-                <p v-if="message.answer" class="bubble-text">{{ message.answer }}</p>
+                <p
+                  v-if="message.answer"
+                  class="bubble-text"
+                  :class="{ 'typewriter-cursor': status === 'streaming' && message.id === messages[messages.length - 1]?.id }"
+                >{{ message.answer }}</p>
 
                 <!-- 加载占位符 -->
                 <div
@@ -1107,7 +1110,7 @@ const sendMessage = async () => {
           </div>
 
           <!-- 用户消息 -->
-          <div v-else class="flex flex-col items-end gap-1">
+          <div v-else class="flex flex-col items-end gap-1 w-full">
             <div class="bubble bubble-user">
               <p class="bubble-text">{{ message.answer }}</p>
 

@@ -239,7 +239,7 @@
     transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.28s ease;
     /* Safe area left padding */
     padding-left: var(--safe-left);
-    padding-top: var(--safe-top);
+    padding-top: calc(var(--safe-top) + var(--header-offset, 56px));
   }
 
   /* 历史抽屉动效 */
@@ -564,7 +564,7 @@
 
   /* 思维链展示 */
   .think-box {
-    @apply mb-3 w-full rounded-xl border px-3 py-2 text-xs;
+    @apply mb-3 w-full rounded-xl border px-3 py-1.5 text-xs;
     background-color: rgba(238, 242, 255, 0.7);
     border-color: rgba(165, 180, 252, 0.5);
     color: rgb(79, 70, 229);
@@ -589,7 +589,7 @@
   }
 
   .think-content {
-    @apply mt-2 text-xs;
+    @apply mt-1 text-xs;
     color: rgba(67, 56, 202, 0.85);
     white-space: pre-wrap;
     line-height: 1.6;
@@ -701,6 +701,25 @@
     50% {
       box-shadow: 0 8px 32px -4px rgba(37, 99, 235, 0.32), 0 0 0 6px rgba(37, 99, 235, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.7);
     }
+  }
+
+  /* 打字机光标 —— 流式输出时在文字末尾显示闪烁光标 */
+  .typewriter-cursor::after {
+    content: '';
+    display: inline-block;
+    width: 2px;
+    height: 0.85em;
+    background: currentColor;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    border-radius: 1px;
+    opacity: 0.7;
+    animation: blink 0.75s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 0.7; }
+    50% { opacity: 0; }
   }
 
   /* Scrollbar — thinner on mobile */
